@@ -9,18 +9,23 @@ import numpy as np
 from collections import Counter, defaultdict
 import threading
 
+
 # ==================== 随机数生成器 ====================
-def c_style_rand(N):
-    return random.randint(0, N-1)
+def c_style_rand(N, size):
+    return [random.randint(0, N - 1) for _ in range(size)]
 
-def uniform_rand(N):
-    return np.random.randint(0, N)
 
-def normal_rand(N):
+def uniform_rand(N, size):
+    return np.random.randint(0, N, size=size)
+
+
+def normal_rand(N, size):
     mean = (N - 1) / 2
     std = (N - 1) / 6
-    value = int(np.random.normal(mean, std))
-    return max(0, min(N - 1, value))
+    values = np.random.normal(mean, std, size=size)
+    values = np.clip(np.round(values), 0, N - 1).astype(int)
+    return values
+
 
 # ==================== 测评工具实现 ====================
 class RandomnessTester:
@@ -28,7 +33,7 @@ class RandomnessTester:
         self.rand_func = rand_func
         self.N = N
         self.sample_size = sample_size
-        self.samples = [rand_func(N) for _ in range(sample_size)]
+        self.samples = rand_func(N, sample_size)
 
     def distribution_test(self, ax1, ax2):
         freq = Counter(self.samples)
@@ -39,13 +44,11 @@ class RandomnessTester:
         ax1.set_xlabel('Number')
         ax1.set_ylabel('Count')
 
-        intervals = []
+
         positions = defaultdict(list)
         for idx, val in enumerate(self.samples):
             positions[val].append(idx)
-        for val in positions:
-            for i in range(1, len(positions[val])):
-                intervals.append(positions[val][i] - positions[val][i-1])
+        intervals = np.concatenate([np.diff(np.array(pos)) for pos in positions.values()])  
         ax2.clear()
         ax2.hist(intervals, bins=30, density=True)
         ax2.set_title('Interval Distribution')
@@ -60,8 +63,9 @@ class RandomnessTester:
         result = f"统计特征：均值={mean:.2f}, 方差={var:.2f}, 偏度={skew:.2f}, 峰度={kurtosis:.2f}\n"
 
         ax1.clear()
-        stats.probplot(self.samples, dist="uniform", sparams=(0, self.N-1), plot=ax1)
+        stats.probplot(self.samples, dist="uniform", sparams=(0, self.N - 1), plot=ax1)
         ax1.set_title('Q-Q Plot (Uniform)')
+
         ax2.clear()
         stats.probplot(self.samples, dist="norm", sparams=(mean, np.std(self.samples)), plot=ax2)
         ax2.set_title('Q-Q Plot (Normal)')
@@ -69,23 +73,34 @@ class RandomnessTester:
 
     def distribution_check(self):
         observed = np.array([Counter(self.samples).get(i, 0) for i in range(self.N)])
-        expected = np.full(self.N, len(self.samples)/self.N)
+        expected = np.full(self.N, len(self.samples) / self.N)
         chi2, p = stats.chisquare(observed, expected)
         result = f"卡方检验：χ²={chi2:.2f}, p值={p:.4f}\n"
-        uniform_samples = np.random.uniform(0, self.N-1, len(self.samples))
+
+        uniform_samples = np.random.uniform(0, self.N - 1, len(self.samples))
         ks_stat, p_value = stats.ks_2samp(self.samples, uniform_samples)
         result += f"KS检验：D={ks_stat:.4f}, p值={p_value:.4f}\n"
         return result
 
     def randomness_test(self, ax):
+
         lag = 1
-        acf = np.corrcoef(self.samples[:-lag], self.samples[lag:])[0,1]
+        acf = np.corrcoef(self.samples[:-lag], self.samples[lag:])[0, 1]
         result = f"滞后1阶自相关系数：{acf:.4f}\n"
-        runs = 1
-        for i in range(1, len(self.samples)):
-            if (self.samples[i] > self.samples[i-1]) != (self.samples[i-1] > self.samples[i-2]):
-                runs += 1
+
+
+        samples_array = np.array(self.samples)
+
+
+        delta = np.diff(samples_array)
+        trend_changes = np.diff(np.sign(delta)) != 0
+
+
+        runs = np.sum(trend_changes) + 1
+
         result += f"游程数量：{runs}\n"
+
+
         ax.clear()
         ax.acorr(self.samples, maxlags=10)
         ax.set_title('Autocorrelation')
@@ -93,10 +108,16 @@ class RandomnessTester:
 
     def performance_test(self):
         start_time = time.time()
-        test_samples = [self.rand_func(self.N) for _ in range(self.sample_size)]
+        test_samples = self.rand_func(self.N, self.sample_size) 
         duration = time.time() - start_time
-        result = f"生成速度：{int(self.sample_size/duration)} samples/sec\n"
-        mem_usage = sum(x.__sizeof__() for x in test_samples[:self.sample_size]) / 1024
+
+
+        if isinstance(test_samples, np.ndarray):
+            mem_usage = test_samples.nbytes / 1024
+        else:
+            mem_usage = sum(x.__sizeof__() for x in test_samples[:self.sample_size]) / 1024
+
+        result = f"生成速度：{int(self.sample_size / duration)} samples/sec\n"
         result += f"内存占用：约{mem_usage:.2f} KB for {self.sample_size} samples\n"
         return result
 
@@ -106,6 +127,7 @@ class RandomnessTester:
         probabilities = probabilities[probabilities > 0]
         entropy = -np.sum(probabilities * np.log2(probabilities))
         return f"信息熵：{entropy:.4f}（理论最大熵：{np.log2(self.N):.4f}）\n"
+
 
 # ==================== GUI 应用 ====================
 class RandomnessApp(tk.Tk):
@@ -130,9 +152,15 @@ class RandomnessApp(tk.Tk):
         input_frame.pack(padx=10, pady=5, fill="x")
 
         self.rand_choice = tk.IntVar(value=1)
-        ttk.Radiobutton(input_frame, text="C风格rand()%N", variable=self.rand_choice, value=1).grid(row=0, column=0, sticky="w", padx=5, pady=2)
-        ttk.Radiobutton(input_frame, text="均匀分布", variable=self.rand_choice, value=2).grid(row=1, column=0, sticky="w", padx=5, pady=2)
-        ttk.Radiobutton(input_frame, text="正态分布", variable=self.rand_choice, value=3).grid(row=2, column=0, sticky="w", padx=5, pady=2)
+        ttk.Radiobutton(input_frame, text="C风格rand()%N", variable=self.rand_choice, value=1).grid(row=0, column=0,
+                                                                                                    sticky="w", padx=5,
+                                                                                                    pady=2)
+        ttk.Radiobutton(input_frame, text="均匀分布", variable=self.rand_choice, value=2).grid(row=1, column=0,
+                                                                                               sticky="w", padx=5,
+                                                                                               pady=2)
+        ttk.Radiobutton(input_frame, text="正态分布", variable=self.rand_choice, value=3).grid(row=2, column=0,
+                                                                                               sticky="w", padx=5,
+                                                                                               pady=2)
 
         ttk.Label(input_frame, text="N值:").grid(row=0, column=1, sticky="e", padx=5)
         self.n_entry = ttk.Entry(input_frame, width=15)
@@ -159,8 +187,8 @@ class RandomnessApp(tk.Tk):
         self.buttons = {}
         for i, (key, text) in enumerate(tests):
             btn = ttk.Button(btn_frame, text=text,
-                            command=lambda k=key: self.run_test(k),
-                            width=15)
+                             command=lambda k=key: self.run_test(k),
+                             width=15)
             btn.grid(row=0, column=i, padx=2)
             self.buttons[key] = btn
 
@@ -172,7 +200,6 @@ class RandomnessApp(tk.Tk):
 
         plot_container = ttk.Frame(result_frame)
         result_frame.add(plot_container, text="图表显示")
-
         self.fig = plt.Figure(figsize=(8, 6), dpi=100)
         self.fig.patch.set_facecolor('#f0f0f0')
         self.canvas = FigureCanvasTkAgg(self.fig, master=plot_container)
@@ -194,7 +221,6 @@ class RandomnessApp(tk.Tk):
             3: normal_rand
         }
         rand_func = rand_func_map[self.rand_choice.get()]
-
         self.tester = RandomnessTester(rand_func, N, sample_size)
         threading.Thread(target=self.execute_test, args=(test_num,), daemon=True).start()
 
@@ -255,6 +281,7 @@ class RandomnessApp(tk.Tk):
     def run_entropy_test(self):
         result = self.tester.entropy_test()
         self.text_output.insert(tk.END, result + "熵值计算完毕\n")
+
 
 if __name__ == "__main__":
     app = RandomnessApp()
