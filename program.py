@@ -10,7 +10,7 @@ from collections import Counter, defaultdict
 import threading
 
 
-# ==================== 随机数生成器 ====================
+//随机数生成器
 def c_style_rand(N, size):
     return [random.randint(0, N - 1) for _ in range(size)]
 
@@ -27,7 +27,7 @@ def normal_rand(N, size):
     return values
 
 
-# ==================== 测评工具实现 ====================
+//测评工具
 class RandomnessTester:
     def __init__(self, rand_func, N=100, sample_size=10000):
         self.rand_func = rand_func
@@ -129,7 +129,7 @@ class RandomnessTester:
         return f"信息熵：{entropy:.4f}（理论最大熵：{np.log2(self.N):.4f}）\n"
 
 
-# ==================== GUI 应用 ====================
+//GUI
 class RandomnessApp(tk.Tk):
     def __init__(self):
         super().__init__()
